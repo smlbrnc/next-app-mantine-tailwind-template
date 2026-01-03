@@ -17,7 +17,6 @@ import {
   Text,
   UnstyledButton,
   useMantineTheme,
-  useMantineColorScheme,
   Button,
   Drawer,
   Stack,
@@ -35,12 +34,12 @@ const tabs = [
   { value: "/", label: "Ana Sayfa" },
   { value: "/portfolio", label: "Portföy" },
   { value: "/analiz", label: "Analiz" },
+  { value: "/market", label: "Market" },
   { value: "/about", label: "Hakkında" },
 ];
 
 export function HeaderMenu() {
   const theme = useMantineTheme();
-  const { setColorScheme, colorScheme } = useMantineColorScheme();
   const { user, signOut, loading: authLoading } = useAuth();
   const [opened, { toggle }] = useDisclosure(false);
   const [userMenuOpened, { open: openUserMenu, close: closeUserMenu }] = useDisclosure(false);
@@ -134,13 +133,6 @@ export function HeaderMenu() {
                         Hesap Ayarları
                       </Menu.Item>
                       <Menu.Item
-                        onClick={() =>
-                          setColorScheme(colorScheme === "dark" ? "light" : "dark")
-                        }
-                      >
-                        Tema Değiştir ({colorScheme === "dark" ? "Açık" : "Koyu"})
-                      </Menu.Item>
-                      <Menu.Item
                         leftSection={<IconLogout size={16} stroke={1.5} />}
                         onClick={() => signOut()}
                       >
@@ -216,6 +208,13 @@ export function HeaderMenu() {
             />
             <NavLink
               component={Link}
+              href="/market"
+              label="Market"
+              active={pathname === "/market"}
+              onClick={toggle}
+            />
+            <NavLink
+              component={Link}
               href="/about"
               label="Hakkında"
               active={pathname === "/about"}
@@ -274,12 +273,6 @@ export function HeaderMenu() {
                       leftSection={<IconSettings size={16} />}
                       active={pathname === "/settings"}
                       onClick={toggle}
-                    />
-                    <NavLink
-                      label={`Tema Değiştir (${colorScheme === "dark" ? "Açık" : "Koyu"})`}
-                      onClick={() => {
-                        setColorScheme(colorScheme === "dark" ? "light" : "dark");
-                      }}
                     />
                     <NavLink
                       label="Çıkış Yap"
