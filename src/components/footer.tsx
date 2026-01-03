@@ -9,6 +9,7 @@ const links = [
   { link: "/", label: "Ana Sayfa" },
   { link: "/portfolio", label: "Portföy" },
   { link: "/analiz", label: "Analiz" },
+  { link: "/market", label: "Market" },
   { link: "/about", label: "Hakkında" },
 ];
 
