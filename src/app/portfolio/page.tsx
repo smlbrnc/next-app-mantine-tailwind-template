@@ -22,7 +22,6 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { IconStarFilled, IconTrash, IconArrowUpRight, IconWallet } from "@tabler/icons-react";
-import { mockCryptoData } from "@/lib/mock-data";
 import { getFavoritesCoins, formatCurrency, formatLargeNumber, formatPercentage, removeFavorite } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { useState, useEffect } from "react";
@@ -66,7 +65,7 @@ export default function PortfolioPage() {
     
     setLoading(true);
     try {
-      const favoriteCoins = await getFavoritesCoins(user.id, mockCryptoData);
+      const favoriteCoins = await getFavoritesCoins(user.id);
       setFavorites(favoriteCoins);
       const total = favoriteCoins.reduce((sum, coin) => sum + coin.current_price, 0);
       setTotalValue(total);

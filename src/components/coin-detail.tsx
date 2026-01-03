@@ -23,7 +23,9 @@ import {
   toggleFavorite,
 } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { getTicker24hr, createBinanceWebSocket, symbolToBinancePair, updateCoinFromTicker } from "@/lib/binance";
+import { BinanceTicker24hr } from "@/lib/types";
 
 interface CoinDetailProps {
   coin: CryptoCoin;
@@ -33,6 +35,79 @@ export function CoinDetail({ coin }: CoinDetailProps) {
   const { user } = useAuth();
   const [isFav, setIsFav] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [coinData, setCoinData] = useState<CryptoCoin>(coin);
+  const [loadingData, setLoadingData] = useState(true);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Initial load from Binance API
+  const loadInitialData = useCallback(async () => {
+    setLoadingData(true);
+    try {
+      const binanceSymbol = symbolToBinancePair(coin.symbol);
+      const ticker = await getTicker24hr(binanceSymbol);
+      const updatedCoin = updateCoinFromTicker(coin, ticker);
+      setCoinData(updatedCoin);
+    } catch (error) {
+      console.error("Error loading coin data:", error);
+      // Fallback to original coin data on error
+      setCoinData(coin);
+    } finally {
+      setLoadingData(false);
+    }
+  }, [coin, updateCoinFromTicker]);
+
+  // Setup WebSocket for real-time updates
+  useEffect(() => {
+    let isMounted = true;
+    let ws: WebSocket | null = null;
+
+    // Initial load
+    loadInitialData();
+
+    // Close existing WebSocket
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // Delay WebSocket connection to avoid race conditions
+    const timeoutId = setTimeout(() => {
+      if (!isMounted) return;
+
+      const binanceSymbol = symbolToBinancePair(coin.symbol);
+
+      // Create WebSocket connection
+      ws = createBinanceWebSocket(binanceSymbol, {
+        onTicker: (tickerData) => {
+          if (isMounted) {
+            setCoinData((prevCoin) => updateCoinFromTicker(prevCoin, tickerData));
+          }
+        },
+        onError: (error) => {
+          // Only log if component is still mounted
+          if (isMounted) {
+            console.error("WebSocket error:", error);
+          }
+        },
+      });
+
+      wsRef.current = ws;
+    }, 100);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+      
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch (error) {
+          // Ignore close errors
+        }
+        wsRef.current = null;
+      }
+    };
+  }, [coin.symbol, loadInitialData]);
 
   useEffect(() => {
     if (user?.id) {
@@ -40,7 +115,7 @@ export function CoinDetail({ coin }: CoinDetailProps) {
     } else {
       setIsFav(false);
     }
-  }, [user?.id, coin.id]);
+  }, [user?.id, coinData.id]);
 
   const loadFavoriteStatus = async () => {
     if (!user?.id) return;
@@ -62,14 +137,14 @@ export function CoinDetail({ coin }: CoinDetailProps) {
     }
   };
 
-  const isPositive = coin.price_change_percentage_24h >= 0;
+  const isPositive = coinData.price_change_percentage_24h >= 0;
 
   // Mock price history data
   const priceHistory: PriceHistory[] = [
-    { date: "2024-01-01", price: coin.current_price * 0.95 },
-    { date: "2024-01-02", price: coin.current_price * 0.97 },
-    { date: "2024-01-03", price: coin.current_price * 0.99 },
-    { date: "2024-01-04", price: coin.current_price },
+    { date: "2024-01-01", price: coinData.current_price * 0.95 },
+    { date: "2024-01-02", price: coinData.current_price * 0.97 },
+    { date: "2024-01-03", price: coinData.current_price * 0.99 },
+    { date: "2024-01-04", price: coinData.current_price },
   ];
 
   return (
@@ -78,23 +153,23 @@ export function CoinDetail({ coin }: CoinDetailProps) {
         {/* Header */}
         <Group justify="space-between" align="flex-start">
           <Group gap="md">
-            <Avatar src={coin.image} alt={coin.name} size="xl" />
+            <Avatar src={coinData.image} alt={coinData.name} size="xl" />
             <Stack gap={4}>
               <Group gap="sm">
-                <Title order={1}>{coin.name}</Title>
+                <Title order={1}>{coinData.name}</Title>
                 <Badge size="lg" variant="light" tt="uppercase">
-                  {coin.symbol}
+                  {coinData.symbol}
                 </Badge>
                 <Badge
                   size="lg"
                   color={isPositive ? "green" : "red"}
                   variant="light"
                 >
-                  {formatPercentage(coin.price_change_percentage_24h)}
+                  {formatPercentage(coinData.price_change_percentage_24h)}
                 </Badge>
               </Group>
               <Text c="dimmed" size="sm">
-                Market Cap Rank: #{coin.market_cap_rank}
+                Market Cap Rank: #{coinData.market_cap_rank}
               </Text>
             </Stack>
           </Group>
@@ -116,28 +191,28 @@ export function CoinDetail({ coin }: CoinDetailProps) {
         <Paper p="lg" withBorder>
           <Stack gap="md">
             <Text size="xl" fw={700}>
-              {formatCurrency(coin.current_price)}
+              {formatCurrency(coinData.current_price)}
             </Text>
             <Group gap="lg">
               <Stack gap={4}>
                 <Text size="sm" c="dimmed">
                   24s Yüksek
                 </Text>
-                <Text fw={500}>{formatCurrency(coin.high_24h)}</Text>
+                <Text fw={500}>{formatCurrency(coinData.high_24h)}</Text>
               </Stack>
               <Stack gap={4}>
                 <Text size="sm" c="dimmed">
                   24s Düşük
                 </Text>
-                <Text fw={500}>{formatCurrency(coin.low_24h)}</Text>
+                <Text fw={500}>{formatCurrency(coinData.low_24h)}</Text>
               </Stack>
               <Stack gap={4}>
                 <Text size="sm" c="dimmed">
                   Değişim (24s)
                 </Text>
                 <Text fw={500} c={isPositive ? "green" : "red"}>
-                  {formatCurrency(coin.price_change_24h)} (
-                  {formatPercentage(coin.price_change_percentage_24h)})
+                  {formatCurrency(coinData.price_change_24h)} (
+                  {formatPercentage(coinData.price_change_percentage_24h)})
                 </Text>
               </Stack>
             </Group>
@@ -152,7 +227,7 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                 <Text size="sm" c="dimmed">
                   Market Cap
                 </Text>
-                <Text fw={600}>{formatLargeNumber(coin.market_cap)}</Text>
+                <Text fw={600}>{formatLargeNumber(coinData.market_cap)}</Text>
               </Stack>
             </Paper>
           </Grid.Col>
@@ -162,7 +237,7 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                 <Text size="sm" c="dimmed">
                   Toplam Hacim
                 </Text>
-                <Text fw={600}>{formatLargeNumber(coin.total_volume)}</Text>
+                <Text fw={600}>{formatLargeNumber(coinData.total_volume)}</Text>
               </Stack>
             </Paper>
           </Grid.Col>
@@ -173,7 +248,7 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                   Dolaşımdaki Arz
                 </Text>
                 <Text fw={600}>
-                  {coin.circulating_supply.toLocaleString()} {coin.symbol.toUpperCase()}
+                  {coinData.circulating_supply.toLocaleString()} {coinData.symbol.toUpperCase()}
                 </Text>
               </Stack>
             </Paper>
@@ -185,8 +260,8 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                   Toplam Arz
                 </Text>
                 <Text fw={600}>
-                  {coin.total_supply
-                    ? `${coin.total_supply.toLocaleString()} ${coin.symbol.toUpperCase()}`
+                  {coinData.total_supply
+                    ? `${coinData.total_supply.toLocaleString()} ${coinData.symbol.toUpperCase()}`
                     : "N/A"}
                 </Text>
               </Stack>
@@ -203,11 +278,11 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                   Tüm Zamanların En Yükseği (ATH)
                 </Text>
                 <Text fw={600} size="lg">
-                  {formatCurrency(coin.ath)}
+                  {formatCurrency(coinData.ath)}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {formatPercentage(coin.ath_change_percentage)} (
-                  {new Date(coin.ath_date).toLocaleDateString("tr-TR")})
+                  {formatPercentage(coinData.ath_change_percentage)} (
+                  {new Date(coinData.ath_date).toLocaleDateString("tr-TR")})
                 </Text>
               </Stack>
             </Paper>
@@ -219,11 +294,11 @@ export function CoinDetail({ coin }: CoinDetailProps) {
                   Tüm Zamanların En Düşüğü (ATL)
                 </Text>
                 <Text fw={600} size="lg">
-                  {formatCurrency(coin.atl)}
+                  {formatCurrency(coinData.atl)}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {formatPercentage(coin.atl_change_percentage)} (
-                  {new Date(coin.atl_date).toLocaleDateString("tr-TR")})
+                  {formatPercentage(coinData.atl_change_percentage)} (
+                  {new Date(coinData.atl_date).toLocaleDateString("tr-TR")})
                 </Text>
               </Stack>
             </Paper>

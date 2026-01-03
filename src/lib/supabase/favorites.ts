@@ -26,6 +26,13 @@ export async function getUserFavorites(userId: string): Promise<string[]> {
 export async function addUserFavorite(userId: string, coinId: string): Promise<{ error: any }> {
   const supabase = createClient();
 
+  // First check if already exists to avoid duplicate key error
+  const isFav = await isUserFavorite(userId, coinId);
+  if (isFav) {
+    // Already in favorites, no error
+    return { error: null };
+  }
+
   const { error } = await supabase
     .from("user_favorites")
     .insert({
@@ -34,6 +41,11 @@ export async function addUserFavorite(userId: string, coinId: string): Promise<{
     });
 
   if (error) {
+    // Check for duplicate key error (23505 is PostgreSQL unique violation)
+    if (error.code === "23505" || error.message?.includes("duplicate")) {
+      // Already exists, treat as success
+      return { error: null };
+    }
     console.error("Error adding favorite:", error);
     return { error };
   }
@@ -72,11 +84,16 @@ export async function isUserFavorite(userId: string, coinId: string): Promise<bo
     .select("id")
     .eq("user_id", userId)
     .eq("coin_id", coinId)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
+  if (error) {
+    // PGRST116 error means no rows found, which is fine - coin is not favorite
+    if (error.code === "PGRST116") {
+      return false;
+    }
+    console.error("Error checking favorite:", error);
     return false;
   }
 
-  return true;
+  return data !== null;
 }

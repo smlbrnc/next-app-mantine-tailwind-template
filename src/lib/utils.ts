@@ -16,15 +16,6 @@ export async function getFavorites(userId: string | null): Promise<string[]> {
 }
 
 /**
- * Add a coin to user's favorites
- * Does nothing if user is not authenticated
- */
-export async function addFavorite(userId: string | null, coinId: string): Promise<void> {
-  if (!userId) return;
-  await addUserFavorite(userId, coinId);
-}
-
-/**
  * Remove a coin from user's favorites
  * Does nothing if user is not authenticated
  */
@@ -48,11 +39,23 @@ export async function isFavorite(userId: string | null, coinId: string): Promise
  */
 export async function toggleFavorite(userId: string | null, coinId: string): Promise<void> {
   if (!userId) return;
-  const isFav = await isUserFavorite(userId, coinId);
-  if (isFav) {
-    await removeUserFavorite(userId, coinId);
-  } else {
-    await addUserFavorite(userId, coinId);
+  
+  try {
+    const isFav = await isUserFavorite(userId, coinId);
+    if (isFav) {
+      const result = await removeUserFavorite(userId, coinId);
+      if (result.error) {
+        throw new Error(result.error.message || "Failed to remove favorite");
+      }
+    } else {
+      const result = await addUserFavorite(userId, coinId);
+      if (result.error) {
+        throw new Error(result.error.message || "Failed to add favorite");
+      }
+    }
+  } catch (error) {
+    console.error("Error toggling favorite:", error);
+    throw error;
   }
 }
 
@@ -96,12 +99,38 @@ export function formatNumber(value: number, decimals: number = 2): string {
 /**
  * Get favorite coin objects for a user
  * Returns empty array if user is not authenticated
+ * Fetches coin data from Binance API
  */
 export async function getFavoritesCoins(
-  userId: string | null,
-  coins: CryptoCoin[]
+  userId: string | null
 ): Promise<CryptoCoin[]> {
   if (!userId) return [];
+  
   const favoriteIds = await getUserFavorites(userId);
-  return coins.filter((coin) => favoriteIds.includes(coin.id));
+  if (favoriteIds.length === 0) return [];
+  
+  // Import here to avoid circular dependency
+  const { getCoinById } = await import("./binance");
+  
+  // Fetch all favorite coins from Binance API
+  // Use Promise.allSettled to handle individual failures gracefully
+  const coinPromises = favoriteIds.map((id) => 
+    getCoinById(id).catch((error) => {
+      // Silently skip coins that can't be fetched (e.g., not available on Binance)
+      console.warn(`Coin ${id} could not be fetched from Binance:`, error.message);
+      return null;
+    })
+  );
+  
+  const results = await Promise.allSettled(coinPromises);
+  const coins = results
+    .map((result) => {
+      if (result.status === "fulfilled" && result.value !== null) {
+        return result.value;
+      }
+      return null;
+    })
+    .filter((coin): coin is CryptoCoin => coin !== null);
+  
+  return coins;
 }

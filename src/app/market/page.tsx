@@ -43,8 +43,14 @@ export default function MarketPage() {
   const [trades, setTrades] = useState<BinanceTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const tradesBufferRef = useRef<BinanceTrade[]>([]);
+
+  // Client-side only render için
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // İlk yükleme - REST API ile
   const loadInitialData = useCallback(async () => {
@@ -144,14 +150,26 @@ export default function MarketPage() {
                 <Text fw={600} size="md">
                   Coin Seçimi
                 </Text>
-                <Select
-                  label="Coin"
-                  placeholder="Coin seçin"
-                  data={POPULAR_SYMBOLS}
-                  value={selectedSymbol}
-                  onChange={(value) => value && setSelectedSymbol(value)}
-                  searchable
-                />
+                {mounted ? (
+                  <Select
+                    label="Coin"
+                    placeholder="Coin seçin"
+                    data={POPULAR_SYMBOLS}
+                    value={selectedSymbol}
+                    onChange={(value) => value && setSelectedSymbol(value)}
+                    searchable
+                  />
+                ) : (
+                  <Select
+                    label="Coin"
+                    placeholder="Coin seçin"
+                    data={POPULAR_SYMBOLS}
+                    value={selectedSymbol}
+                    onChange={() => {}}
+                    searchable
+                    disabled
+                  />
+                )}
               </Stack>
             </Paper>
 

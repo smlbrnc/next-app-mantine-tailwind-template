@@ -21,12 +21,12 @@ import {
   Skeleton,
 } from "@mantine/core";
 import { IconArrowUpRight, IconArrowDownRight, IconAlertCircle } from "@tabler/icons-react";
-import { mockCryptoData } from "@/lib/mock-data";
 import { getAnalysisData } from "@/lib/analysis-data";
-import { getFavoritesCoins, formatCurrency, formatPercentage, formatNumber } from "@/lib/utils";
+import { getFavoritesCoins, formatCurrency, formatPercentage, formatLargeNumber, formatNumber } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { useState, useEffect } from "react";
-import { CryptoCoin } from "@/lib/types";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { CryptoCoin, BinanceTicker24hr } from "@/lib/types";
+import { createMultiTickerWebSocket, symbolToBinancePair, updateCoinFromTicker } from "@/lib/binance";
 
 export default function AnalizPage() {
   const { user } = useAuth();
@@ -37,6 +37,7 @@ export default function AnalizPage() {
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [expandedCoins, setExpandedCoins] = useState<Set<string>>(new Set());
   const [loadingTextIndex, setLoadingTextIndex] = useState(0);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const loadingTexts = [
     "Yapay zeka analiz yapıyor...",
@@ -59,7 +60,7 @@ export default function AnalizPage() {
     
     setLoading(true);
     try {
-      const favoriteCoins = await getFavoritesCoins(user.id, mockCryptoData);
+      const favoriteCoins = await getFavoritesCoins(user.id);
       setFavorites(favoriteCoins);
     } catch (error) {
       console.error("Error loading favorites:", error);
@@ -67,6 +68,53 @@ export default function AnalizPage() {
       setLoading(false);
     }
   };
+
+  // Setup WebSocket for real-time updates
+  useEffect(() => {
+    // Close existing WebSocket
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // Wait for favorites to load before setting up WebSocket
+    if (favorites.length > 0) {
+      // Get all symbols for WebSocket
+      const symbols = favorites
+        .map((coin) => symbolToBinancePair(coin.symbol))
+        .filter((symbol) => symbol); // Filter out invalid symbols
+      
+      if (symbols.length > 0) {
+        // Create WebSocket connection for all tickers
+        const ws = createMultiTickerWebSocket(symbols, {
+          onTicker: (symbol, tickerData) => {
+            // Find corresponding coin and update
+            setFavorites((prevFavorites) => {
+              return prevFavorites.map((coin) => {
+                const coinBinanceSymbol = symbolToBinancePair(coin.symbol);
+                if (coinBinanceSymbol === symbol) {
+                  return updateCoinFromTicker(coin, tickerData);
+                }
+                return coin;
+              });
+            });
+          },
+          onError: (error) => {
+            console.error("WebSocket error:", error);
+          },
+        });
+
+        wsRef.current = ws;
+
+        return () => {
+          if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+          }
+        };
+      }
+    }
+  }, [favorites.length]);
 
   // Rotate loading texts when analyzing
   useEffect(() => {
@@ -257,16 +305,14 @@ export default function AnalizPage() {
                             <Text fw={700} size="xl">
                               {analysis?.price ? formatCurrency(analysis.price.value) : formatCurrency(coin.current_price)}
                             </Text>
-                            {analysis && (
-                              <Group gap={4} align="center">
-                                <Text size="xs" c="dimmed" fw={500}>
-                                  Hacim:
-                                </Text>
-                                <Text fw={600} size="sm">
-                                  {formatNumber(analysis.candle.volume, 2)}
-                                </Text>
-                              </Group>
-                            )}
+                            <Group gap={4} align="center">
+                              <Text size="xs" c="dimmed" fw={500}>
+                                Hacim:
+                              </Text>
+                              <Text fw={600} size="sm">
+                                {formatLargeNumber(coin.total_volume)}
+                              </Text>
+                            </Group>
                           </Stack>
                         </Group>
                       </Grid.Col>
