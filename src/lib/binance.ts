@@ -8,127 +8,245 @@ import {
 const BINANCE_API_BASE = "https://api.binance.com/api/v3";
 const LOGO_DEV_API_KEY = "pk_WftL_Wn9Rr2QGs5pXj5uPA";
 
-/**
- * Get 24hr ticker statistics for a symbol
- */
-export async function getTicker24hr(symbol: string): Promise<BinanceTicker24hr> {
-  try {
-    const response = await fetch(
-      `${BINANCE_API_BASE}/ticker/24hr?symbol=${symbol.toUpperCase()}`,
-      {
-        method: "GET",
-        headers: {
-          "Accept": "application/json",
-        },
-        cache: "no-store",
+// Rate limit: 6000 REQUEST_WEIGHT per minute
+// Endpoint weights:
+// - GET /api/v3/ticker/24hr (single): 1 weight
+// - GET /api/v3/ticker/24hr (all): 40 weight
+// - GET /api/v3/depth: 1-100 weight (based on limit)
+// - GET /api/v3/trades: 1 weight
+
+// Cache duration for different endpoints (in milliseconds)
+const CACHE_DURATION = {
+  TICKER: 1000, // 1 second for ticker data
+  ORDER_BOOK: 500, // 0.5 seconds for order book
+  TRADES: 500, // 0.5 seconds for trades
+  ALL_TICKERS: 2000, // 2 seconds for all tickers (heavier endpoint)
+};
+
+// Simple in-memory cache
+const cache = new Map<string, { data: any; timestamp: number; duration: number }>();
+
+// Clean up expired cache entries periodically
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+function startCacheCleanup() {
+  if (cleanupInterval) return; // Already started
+  
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of cache.entries()) {
+      if (now - value.timestamp >= value.duration) {
+        cache.delete(key);
       }
-    );
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ msg: "Unknown error" }));
-      throw new Error(error.msg || `Failed to fetch ticker for ${symbol}`);
     }
-    
-    return response.json();
+  }, 30000); // Clean every 30 seconds
+}
+
+// Start cleanup (works in both browser and Node.js)
+// Use try-catch to handle edge cases where setInterval might not be available
+try {
+  if (typeof setInterval !== "undefined") {
+    startCacheCleanup();
+  }
+} catch (error) {
+  // Silently fail if setInterval is not available (shouldn't happen in normal environments)
+  console.warn("Cache cleanup could not be started:", error);
+}
+
+/**
+ * Get cached data or fetch new data
+ * Returns cached data if available and not expired, otherwise fetches new data
+ */
+async function fetchWithCache<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  duration: number
+): Promise<T> {
+  const cached = cache.get(key);
+  const now = Date.now();
+
+  // Check if cached data exists and is still valid
+  if (cached && (now - cached.timestamp) < cached.duration) {
+    return cached.data as T;
+  }
+
+  // Fetch new data and cache it
+  try {
+    const data = await fetcher();
+    cache.set(key, { data, timestamp: now, duration });
+    return data;
   } catch (error) {
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
-      throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
+    // If fetch fails and we have stale cache, return it as fallback
+    if (cached) {
+      console.warn(`Fetch failed for ${key}, using stale cache`);
+      return cached.data as T;
     }
     throw error;
   }
 }
 
 /**
+ * Get 24hr ticker statistics for a symbol
+ * Weight: 1 per request
+ * Cached for 1 second to reduce API calls
+ */
+export async function getTicker24hr(symbol: string): Promise<BinanceTicker24hr> {
+  const cacheKey = `ticker:${symbol.toUpperCase()}`;
+  
+  return fetchWithCache(
+    cacheKey,
+    async () => {
+      try {
+        const response = await fetch(
+          `${BINANCE_API_BASE}/ticker/24hr?symbol=${symbol.toUpperCase()}`,
+          {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+            },
+            cache: "no-store",
+          }
+        );
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ msg: "Unknown error" }));
+          throw new Error(error.msg || `Failed to fetch ticker for ${symbol}`);
+        }
+        
+        return response.json();
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Failed to fetch") {
+          throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
+        }
+        throw error;
+      }
+    },
+    CACHE_DURATION.TICKER
+  );
+}
+
+/**
  * Get order book for a symbol
+ * Weight: 1-100 (based on limit, default 20 = 1 weight)
+ * Cached for 0.5 seconds to reduce API calls
  */
 export async function getOrderBook(
   symbol: string,
   limit: number = 20
 ): Promise<BinanceOrderBook> {
-  try {
-    const response = await fetch(
-      `${BINANCE_API_BASE}/depth?symbol=${symbol.toUpperCase()}&limit=${limit}`,
-      {
-        method: "GET",
-        headers: {
-          "Accept": "application/json",
-        },
-        cache: "no-store",
+  const cacheKey = `orderbook:${symbol.toUpperCase()}:${limit}`;
+  
+  return fetchWithCache(
+    cacheKey,
+    async () => {
+      try {
+        const response = await fetch(
+          `${BINANCE_API_BASE}/depth?symbol=${symbol.toUpperCase()}&limit=${limit}`,
+          {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+            },
+            cache: "no-store",
+          }
+        );
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ msg: "Unknown error" }));
+          throw new Error(error.msg || `Failed to fetch order book for ${symbol}`);
+        }
+        
+        return response.json();
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Failed to fetch") {
+          throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
+        }
+        throw error;
       }
-    );
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ msg: "Unknown error" }));
-      throw new Error(error.msg || `Failed to fetch order book for ${symbol}`);
-    }
-    
-    return response.json();
-  } catch (error) {
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
-      throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
-    }
-    throw error;
-  }
+    },
+    CACHE_DURATION.ORDER_BOOK
+  );
 }
 
 /**
  * Get recent trades for a symbol
+ * Weight: 1 per request
+ * Cached for 0.5 seconds to reduce API calls
  */
 export async function getRecentTrades(
   symbol: string,
   limit: number = 20
 ): Promise<BinanceTrade[]> {
-  try {
-    const response = await fetch(
-      `${BINANCE_API_BASE}/trades?symbol=${symbol.toUpperCase()}&limit=${limit}`,
-      {
-        method: "GET",
-        headers: {
-          "Accept": "application/json",
-        },
-        cache: "no-store",
+  const cacheKey = `trades:${symbol.toUpperCase()}:${limit}`;
+  
+  return fetchWithCache(
+    cacheKey,
+    async () => {
+      try {
+        const response = await fetch(
+          `${BINANCE_API_BASE}/trades?symbol=${symbol.toUpperCase()}&limit=${limit}`,
+          {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+            },
+            cache: "no-store",
+          }
+        );
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ msg: "Unknown error" }));
+          throw new Error(error.msg || `Failed to fetch trades for ${symbol}`);
+        }
+        
+        return response.json();
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Failed to fetch") {
+          throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
+        }
+        throw error;
       }
-    );
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ msg: "Unknown error" }));
-      throw new Error(error.msg || `Failed to fetch trades for ${symbol}`);
-    }
-    
-    return response.json();
-  } catch (error) {
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
-      throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
-    }
-    throw error;
-  }
+    },
+    CACHE_DURATION.TRADES
+  );
 }
 
 /**
  * Get all ticker 24hr statistics
+ * Weight: 40 per request (heaviest endpoint)
+ * Cached for 2 seconds to reduce API calls
+ * This endpoint should be used sparingly - prefer WebSocket for real-time updates
  */
 export async function getAllTickers(): Promise<BinanceTicker24hr[]> {
-  try {
-    const response = await fetch(`${BINANCE_API_BASE}/ticker/24hr`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-      },
-      cache: "no-store",
-    });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ msg: "Unknown error" }));
-      throw new Error(error.msg || "Failed to fetch all tickers");
-    }
-    
-    return response.json();
-  } catch (error) {
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
-      throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
-    }
-    throw error;
-  }
+  const cacheKey = "allTickers";
+  
+  return fetchWithCache(
+    cacheKey,
+    async () => {
+      try {
+        const response = await fetch(`${BINANCE_API_BASE}/ticker/24hr`, {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+          },
+          cache: "no-store",
+        });
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ msg: "Unknown error" }));
+          throw new Error(error.msg || "Failed to fetch all tickers");
+        }
+        
+        return response.json();
+      } catch (error) {
+        if (error instanceof TypeError && error.message === "Failed to fetch") {
+          throw new Error("Binance API'ye bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.");
+        }
+        throw error;
+      }
+    },
+    CACHE_DURATION.ALL_TICKERS
+  );
 }
 
 /**
@@ -151,17 +269,22 @@ export function updateCoinFromTicker(coin: CryptoCoin, ticker: BinanceTicker24hr
   const highPrice = parseFloat(ticker.highPrice || "0");
   const lowPrice = parseFloat(ticker.lowPrice || "0");
   const volume = parseFloat(ticker.volume || "0");
-  const estimatedMarketCap = lastPrice * volume * 100; // Rough estimate
+  
+  // Calculate market cap: price * volume * multiplier (rough estimate)
+  // Using a more conservative multiplier to avoid overestimating
+  const estimatedMarketCap = lastPrice > 0 && volume > 0 
+    ? lastPrice * volume * 50 
+    : coin.market_cap;
   
   return {
     ...coin,
-    current_price: lastPrice || coin.current_price,
-    price_change_24h: priceChange || coin.price_change_24h,
-    price_change_percentage_24h: priceChangePercent || coin.price_change_percentage_24h,
-    high_24h: highPrice || coin.high_24h,
-    low_24h: lowPrice || coin.low_24h,
-    total_volume: volume || coin.total_volume,
-    market_cap: estimatedMarketCap || coin.market_cap,
+    current_price: lastPrice > 0 ? lastPrice : coin.current_price,
+    price_change_24h: priceChange,
+    price_change_percentage_24h: priceChangePercent,
+    high_24h: highPrice > 0 ? highPrice : coin.high_24h,
+    low_24h: lowPrice > 0 ? lowPrice : coin.low_24h,
+    total_volume: volume > 0 ? volume : coin.total_volume,
+    market_cap: estimatedMarketCap,
     last_updated: new Date().toISOString(),
   };
 }
