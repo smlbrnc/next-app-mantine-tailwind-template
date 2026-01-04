@@ -35,6 +35,7 @@ const tabs = [
   { value: "/", label: "Ana Sayfa" },
   { value: "/portfolio", label: "Portföy" },
   { value: "/analiz", label: "Analiz" },
+  { value: "/trade", label: "Trade" },
   { value: "/docs", label: "Teknik Göstergeler" },
 ];
 
@@ -204,6 +205,13 @@ export function HeaderMenu() {
               href="/analiz"
               label="Analiz"
               active={pathname === "/analiz"}
+              onClick={toggle}
+            />
+            <NavLink
+              component={Link}
+              href="/trade"
+              label="Trade"
+              active={pathname === "/trade"}
               onClick={toggle}
             />
             <NavLink

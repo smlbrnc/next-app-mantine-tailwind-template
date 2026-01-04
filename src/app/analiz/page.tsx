@@ -24,9 +24,9 @@ import {
   Modal,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconArrowUpRight, IconArrowDownRight, IconAlertCircle } from "@tabler/icons-react";
+import { IconAlertCircle } from "@tabler/icons-react";
 import { getAnalysisData } from "@/lib/analysis-data";
-import { getFavoritesCoins, formatCurrency, formatPercentage, formatLargeNumber, formatNumber } from "@/lib/utils";
+import { getFavoritesCoins, formatCurrency, formatLargeNumber, formatNumber } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { useState, useEffect, useRef } from "react";
 import { CryptoCoin } from "@/lib/types";
@@ -328,11 +328,119 @@ export default function AnalizPage() {
     setModalPivotError(null);
   };
 
+  // Helper: Populate indicators from cache data
+  const populateIndicatorsFromCache = (
+    coin: CryptoCoin,
+    cachedData: any,
+    strategy: "swing" | "scalp"
+  ) => {
+    if (strategy === "swing") {
+      setMaValue(cachedData.ma);
+      setModalAtrValue(cachedData.atr);
+      setModalRsiValue(cachedData.rsi);
+      setModalAdxValue(cachedData.adx);
+      if (cachedData.fib_value !== null) {
+        setModalFibValue({
+          value: cachedData.fib_value,
+          trend: cachedData.fib_trend || "N/A",
+          startPrice: cachedData.fib_start_price || 0,
+          endPrice: cachedData.fib_end_price || 0,
+        });
+      }
+      
+      // Update coin indicators state
+      setCoinIndicators(prev => ({
+        ...prev,
+        [coin.id]: {
+          ...prev[coin.id],
+          ma: cachedData.ma,
+          atr: cachedData.atr,
+          rsi: cachedData.rsi,
+          adx: cachedData.adx,
+          fib: cachedData.fib_value !== null ? {
+            value: cachedData.fib_value,
+            trend: cachedData.fib_trend || "N/A",
+            startPrice: cachedData.fib_start_price || 0,
+            endPrice: cachedData.fib_end_price || 0,
+          } : null,
+        },
+      }));
+    } else {
+      setModalAtrValue(cachedData.atr);
+      setModalVwapValue(cachedData.vwap);
+      setModalRsiValue(cachedData.rsi);
+      if (cachedData.bbands_upper !== null) {
+        setModalBbandsValue({
+          valueUpperBand: cachedData.bbands_upper,
+          valueMiddleBand: cachedData.bbands_middle,
+          valueLowerBand: cachedData.bbands_lower,
+        });
+      }
+      if (cachedData.pivot_p !== null) {
+        setModalPivotValue({
+          r3: cachedData.pivot_r3,
+          r2: cachedData.pivot_r2,
+          r1: cachedData.pivot_r1,
+          p: cachedData.pivot_p,
+          s1: cachedData.pivot_s1,
+          s2: cachedData.pivot_s2,
+          s3: cachedData.pivot_s3,
+        });
+      }
+      
+      // Update coin indicators state
+      setCoinIndicators(prev => ({
+        ...prev,
+        [coin.id]: {
+          ...prev[coin.id],
+          atr: cachedData.atr,
+          vwap: cachedData.vwap,
+          rsi: cachedData.rsi,
+          bbands: cachedData.bbands_upper !== null ? {
+            valueUpperBand: cachedData.bbands_upper,
+            valueMiddleBand: cachedData.bbands_middle,
+            valueLowerBand: cachedData.bbands_lower,
+          } : null,
+          pivot: cachedData.pivot_p !== null ? {
+            r3: cachedData.pivot_r3,
+            r2: cachedData.pivot_r2,
+            r1: cachedData.pivot_r1,
+            p: cachedData.pivot_p,
+            s1: cachedData.pivot_s1,
+            s2: cachedData.pivot_s2,
+            s3: cachedData.pivot_s3,
+          } : null,
+        },
+      }));
+    }
+  };
+
   const handleDetailClick = async (coin: CryptoCoin) => {
     setSelectedCoin(coin);
     resetModalStates();
     openDetailModal();
     
+    // Önce cache'den kontrol et
+    try {
+      const response = await fetch(
+        `/api/indicators?coin_id=${coin.id}&strategy=${tradingStrategy}`
+      );
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        // Cache varsa ve 1 dakikadan yeniyse kullan
+        if (result.data && result.is_fresh) {
+          populateIndicatorsFromCache(coin, result.data, tradingStrategy);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error("Cache fetch error:", error);
+      // Cache hatası durumunda fallback'e geç
+    }
+    
+    // Cache yoksa veya eskiyse, mevcut TAAPI çağrılarını yap
     const binanceSymbol = symbolToBinancePair(coin.symbol);
     const rsiInterval = tradingStrategy === "swing" ? "4h" : "1h";
     const atrInterval = tradingStrategy === "swing" ? "4h" : "1h";
@@ -505,6 +613,7 @@ export default function AnalizPage() {
                 <SegmentedControl
                   value={tradingStrategy}
                   onChange={(value) => setTradingStrategy(value as "scalp" | "swing")}
+                  color="blue"
                   data={[
                     { label: "Scalp Trade", value: "scalp" },
                     { label: "Swing Trade", value: "swing" },
@@ -514,8 +623,6 @@ export default function AnalizPage() {
 
             <Stack gap="md">
               {favorites.map((coin) => {
-                const isPositive = coin.price_change_percentage_24h >= 0;
-                const changeColor = isPositive ? "green" : "red";
                 const analysis = getAnalysisData(coin.id, coin.current_price);
                 const indicators = coinIndicators[coin.id] || {};
 
@@ -539,20 +646,6 @@ export default function AnalizPage() {
                               <Badge variant="light" tt="uppercase" size="sm">
                                 {coin.symbol}
                               </Badge>
-                              <Badge
-                                color={changeColor}
-                                variant="light"
-                                size="sm"
-                                leftSection={
-                                  isPositive ? (
-                                    <IconArrowUpRight size={12} />
-                                  ) : (
-                                    <IconArrowDownRight size={12} />
-                                  )
-                                }
-                              >
-                                {formatPercentage(coin.price_change_percentage_24h)}
-                              </Badge>
                             </Group>
                             <Text fw={700} size="xl">
                               {analysis?.price ? formatCurrency(analysis.price.value) : formatCurrency(coin.current_price)}
@@ -573,8 +666,20 @@ export default function AnalizPage() {
                       <Grid.Col span={{ base: 12, sm: 7 }}>
                         {analysis && (
                           <Paper p="md" withBorder radius="md" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                            <Group gap="xl" justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
-                              {tradingStrategy === "swing" ? (
+                            {!coinIndicators[coin.id] ? (
+                              <Stack gap={4} style={{ width: '100%' }}>
+                                <Text fw={600} size="sm">
+                                  Sistem Nasıl Çalışır?
+                                </Text>
+                                <Text size="xs" c="dimmed" style={{ lineHeight: 1.6 }}>
+                                  {tradingStrategy === "swing" 
+                                    ? "Swing Trade stratejisi için teknik göstergeleri görmek ve AI analiz yapmak için 'Verileri Göster' butonuna tıklayın. Sistem, MA, ATR, Fibonacci, RSI ve ADX göstergelerini yükleyecek ve bu verilerle detaylı bir analiz oluşturacaktır."
+                                    : "Scalp Trade stratejisi için teknik göstergeleri görmek ve AI analiz yapmak için 'Verileri Göster' butonuna tıklayın. Sistem, ATR, VWAP, Bollinger Bands, Pivot Points ve RSI göstergelerini yükleyecek ve bu verilerle detaylı bir analiz oluşturacaktır."}
+                                </Text>
+                              </Stack>
+                            ) : (
+                              <Group gap="xl" justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
+                                {tradingStrategy === "swing" ? (
                                 <>
                                   {/* MA */}
                                   <Tooltip
@@ -839,7 +944,8 @@ export default function AnalizPage() {
                                   </Tooltip>
                                 </>
                               )}
-                            </Group>
+                              </Group>
+                            )}
                           </Paper>
                         )}
                       </Grid.Col>
@@ -853,7 +959,7 @@ export default function AnalizPage() {
                             fullWidth
                             onClick={() => handleDetailClick(coin)}
                           >
-                            Detay
+                            Verileri Göster
                           </Button>
                           <Button
                             variant="filled"
